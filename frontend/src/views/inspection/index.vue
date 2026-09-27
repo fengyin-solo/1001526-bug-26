@@ -12,7 +12,7 @@
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
+      <article v-for="item in statCards" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
@@ -56,27 +56,51 @@
     </table>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条巡检任务记录</span>
+      <span>共 {{ total }} 条巡检任务记录，待处理 {{ pendingCount }} 条</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
+type Stats = {
+  total: number
+  pending: number
+  pending_dispatch: number
+  in_progress: number
+  submitted: number
+  voided: number
+  problems_month: number
+}
 
 const ENDPOINT = '/api/inspection'
 const columns = ["巡检单号", "巡检站点", "巡检人员", "巡检日期", "巡检项目", "发现问题数", "巡检时长", "巡检状态"]
 const actions = ["派发巡检", "提交结果", "作废巡检"]
 const statuses = ["待派发", "巡检中", "已提交", "已作废"]
-const stats = [{"label": "待派发巡检", "value": 0}, {"label": "巡检中任务", "value": 0}, {"label": "本月发现问题", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const stats = ref<Stats>({
+  total: 0,
+  pending: 0,
+  pending_dispatch: 0,
+  in_progress: 0,
+  submitted: 0,
+  voided: 0,
+  problems_month: 0,
+})
+// 三处同口径：页脚、统计卡与概览看板的待处理都取自后端 /stats 的 pending。
+const pendingCount = computed(() => stats.value.pending)
+const statCards = computed(() => [
+  { label: '待派发巡检', value: stats.value.pending_dispatch },
+  { label: '巡检中任务', value: stats.value.in_progress },
+  { label: '本月发现问题', value: stats.value.problems_month },
+])
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
@@ -104,9 +128,27 @@ async function runAction(action: string, row: Row) {
     if (!response.ok) {
       throw new Error('巡检任务动作未生效，请稍后重试')
     }
+    const result = (await response.json()) as { ok?: boolean; message?: string }
+    // 后端业务拒绝时 HTTP 仍是 200，需按 ok 判定并保留具体原因（含巡检单号与缺失字段）。
+    if (!result.ok) {
+      errorMessage.value = result.message || '巡检任务操作未生效'
+      return
+    }
     await reload()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '巡检任务操作失败'
+  }
+}
+
+async function reloadStats() {
+  try {
+    const response = await request(`${ENDPOINT}/stats`)
+    if (!response.ok) {
+      throw new Error('巡检任务统计读取失败')
+    }
+    stats.value = await response.json()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '巡检任务统计读取失败'
   }
 }
 
@@ -121,6 +163,8 @@ async function reload() {
     const payload = await response.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    // 统计与列表每次都向后端重新汇总，刷新或换人进入看到的口径保持一致。
+    await reloadStats()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '巡检任务列表读取失败'
   }

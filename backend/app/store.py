@@ -27,14 +27,22 @@ class Store:
                 return row
         return None
 
-    def overview(self) -> dict[str, object]:
+    def overview(
+        self, pending_overrides: dict[str, int] | None = None
+    ) -> dict[str, object]:
+        pending_overrides = pending_overrides or {}
         modules: list[dict[str, object]] = []
         for name in self.module_names():
             rows = self.rows(name)
+            # 巡检等模块的待处理口径以各自 service 的统计为准，避免与行标记漂移。
+            if name in pending_overrides:
+                pending = pending_overrides[name]
+            else:
+                pending = sum(1 for row in rows if row.get("pending"))
             modules.append({
                 "name": name,
                 "created": len(rows),
-                "pending": sum(1 for row in rows if row.get("pending")),
+                "pending": pending,
                 "abnormal": sum(1 for row in rows if row.get("abnormal")),
             })
         cards = [

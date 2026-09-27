@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
+from app.services.inspection import InspectionService
 from app.store import store
 
 app = FastAPI(title="气象观测站网运维平台", version="1.0.0")
@@ -35,4 +36,5 @@ def health() -> dict[str, object]:
 @app.get("/api/overview")
 def overview() -> dict[str, object]:
     """运营概览：把各业务模块的待处理量汇总成看板卡片。"""
-    return store.overview()
+    inspection_pending = InspectionService().stats()["pending"]
+    return store.overview(pending_overrides={"inspection": inspection_pending})
