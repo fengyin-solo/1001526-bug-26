@@ -28,13 +28,21 @@ class Store:
         return None
 
     def overview(self) -> dict[str, object]:
+        from app.services.inspection import InspectionService  # 懒加载避免循环导入
+
+        inspection_stats = InspectionService().get_stats()
         modules: list[dict[str, object]] = []
         for name in self.module_names():
             rows = self.rows(name)
+            if name == "inspection":
+                # 巡检待处理与列表/页脚共用同一份口径：只算待派发与巡检中。
+                pending = int(inspection_stats["待处理巡检"])
+            else:
+                pending = sum(1 for row in rows if row.get("pending"))
             modules.append({
                 "name": name,
                 "created": len(rows),
-                "pending": sum(1 for row in rows if row.get("pending")),
+                "pending": pending,
                 "abnormal": sum(1 for row in rows if row.get("abnormal")),
             })
         cards = [

@@ -12,7 +12,7 @@
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
+      <article v-for="item in statCards" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
@@ -56,30 +56,34 @@
     </table>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条巡检任务记录</span>
+      <span>共 {{ total }} 条巡检任务记录，其中待处理 {{ stats['待处理巡检'] }} 条（已提交、已作废不再计入）</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
+type Stats = Record<'待处理巡检' | '待派发巡检' | '巡检中任务' | '本月发现问题', number>
 
 const ENDPOINT = '/api/inspection'
 const columns = ["巡检单号", "巡检站点", "巡检人员", "巡检日期", "巡检项目", "发现问题数", "巡检时长", "巡检状态"]
 const actions = ["派发巡检", "提交结果", "作废巡检"]
-const statuses = ["待派发", "巡检中", "已提交", "已作废"]
-const stats = [{"label": "待派发巡检", "value": 0}, {"label": "巡检中任务", "value": 0}, {"label": "本月发现问题", "value": 0}]
+const STAT_LABELS = ["待处理巡检", "待派发巡检", "巡检中任务", "本月发现问题"] as const
+const EMPTY_STATS: Stats = { 待处理巡检: 0, 待派发巡检: 0, 巡检中任务: 0, 本月发现问题: 0 }
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const stats = ref<Stats>({ ...EMPTY_STATS })
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+const statCards = computed(() => STAT_LABELS.map((label) => ({ label, value: stats.value[label] })))
 
 function resetFilters() {
   filters.value = {}
@@ -101,8 +105,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('巡检任务动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => null)
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(payload?.message || payload?.detail || '巡检任务动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -121,6 +126,14 @@ async function reload() {
     const payload = await response.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    // 统计以后端口径为准；后端未返回时按同一规则在当前页兜底，保证页脚、卡片、看板三处对得上。
+    stats.value = { ...EMPTY_STATS, ...(payload.stats ?? {}) }
+    if (!payload.stats) {
+      const pendingRows = rows.value.filter((row) => ['待派发', '巡检中'].includes(String(row.status)))
+      stats.value['待处理巡检'] = pendingRows.length
+      stats.value['待派发巡检'] = pendingRows.filter((row) => row.status === '待派发').length
+      stats.value['巡检中任务'] = pendingRows.filter((row) => row.status === '巡检中').length
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '巡检任务列表读取失败'
   }
